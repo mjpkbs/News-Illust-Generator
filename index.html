@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>뉴스 일러스트 생성기 (Gemini Nano Banana) / News Illustration Generator</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic', sans-serif;
+        }
+        .scene-card {
+            transition: all 0.3s ease;
+        }
+        .scene-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #4285f4;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .gemini-gradient {
+            background: linear-gradient(135deg, #4285f4 0%, #34a853 50%, #fbbc04 100%);
+        }
+        .line-clamp-1 {
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 1;
+        }
+        .line-clamp-2 {
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // IndexedDB helper functions
+        const DB_NAME = 'GeminiImageGallery';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'images';
+
+        let db = null;
+
+        const initDB = () => {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    db = request.result;
+                    resolve(db);
+                };
+                
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                    }
+                };
+            });
+        };
+
+        const saveImageToDB = async (imageItem) => {
+            if (!db) await initDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME], 'readwrite');
+                const store = transaction.objectStore(STORE_NAME);
+                const request = store.put(imageItem);
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+        };
+
+        const loadImagesFromDB = async () => {
+            if (!db) await initDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME], 'readonly');
+                const store = transaction.objectStore(STORE_NAME);
+                const request = store.getAll();
+                request.onsuccess = () => {
+                    const images = request.result || [];
+                    // Sort by timestamp, newest first
+                    images.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                    resolve(images);
+                };
+                request.onerror = () => reject(request.error);
+            });
+        };
+
+        const deleteImageFromDB = async (id) => {
+            if (!db) await initDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME], 'readwrite');
+                const store = transaction.objectStore(STORE_NAME);
+                const request = store.delete(id);
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+        };
+
+        const clearAllImagesFromDB = async () => {
+            if (!db) await initDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME], 'readwrite');
+                const store = transaction.objectStore(STORE_NAME);
+                const request = store.clear();
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+        };
+
+        function NewsIllustrationGenerator() {
+            const [apiKey, setApiKey] = useState('');
+            const [characterDescription, setCharacterDescription] = useState('');
+            const [stylePrompt, setStylePrompt] = useState('');
+            const [negativePrompt, setNegativePrompt] = useState('cartoon, anime style, 3d render, low quality, blurry, distorted, watermark, text');
+            const [scenes, setScenes] = useState([
+                { id: 1, prompt: '', generatedImage: null, loading: false, error: null }
+            ]);
+            const [referenceImage, setReferenceImage] = useState(null);
+            
+            // Gemini Nano Banana settings
+            const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash-image');
+            const [aspectRatio, setAspectRatio] = useState('1:1');
+            
+            // Style preset selection
+            const [stylePreset, setStylePreset] = useState(null);
+            
+            // Image history/gallery with IndexedDB
+            const [imageHistory, setImageHistory] = useState([]);
+            const [showGallery, setShowGallery] = useState(false);
+
+            // Style preset definitions
+            const stylePresets = {
+                illustration: 'Generate an image in a gritty, hand-drawn graphic novel storyboard style. The aesthetic should resemble colored pencil and rough ink on textured paper. Key features must include: sketch-like black outlines, heavy cross-hatch shading instead of smooth gradients, and a muted, desaturated color palette. The background should be looser and hazier than the subjects, focusing on the action with a serious, tense tone. Line Work & Texture: Rough outlines with distinct black lines that are not clean vectors but sketchy, slightly wobbly, and hand-drawn with pen or rough pencil. Cross-hatching for shading and depth using lots of small intersecting lines and scratches instead of smooth gradients. Paper texture with underlying grain looking like rough, fibrous paper rather than digital. Color Palette: Muted and desaturated with no bright neons or vibrant colors, feeling washed out, earthy, and somber with lots of greys, browns, dull blues, and olive greens. Colored pencil feel with dry media showing strokes. Mood & Composition: Gritty serious tone suited for crime dramas, thrillers, or serious situations, not cartoonish or cute. Storyboard aesthetic focusing heavily on character action and poses, often blurring or simplifying background details to keep focus on the narrative moment.',
+                
+                photo: 'A photorealistic, hyper-realistic digitally rendered scene in the style of Korean reenactments. Professional broadcast photography, sharp focus, high detail, natural lighting, documentary photography aesthetic, journalism style, crisp details, photojournalism quality, realistic textures, professional camera work, clean professional look.',
+                
+                impasto: 'Thick paint impasto style with rich, vibrant COLORS. Heavy textured paint strokes with visible depth and three-dimensional quality, simulating oil or acrylic paint applied with palette knife. The paint should have physical thickness with ridges and peaks. Bold, expressive colored brushwork. IMPORTANT: Use full color palette - blues, greens, reds, yellows, purples - not just neutral tones. Saturated, vivid colors showing paint depth. Canvas texture visible underneath. Painterly and expressive with dramatic color contrasts. Professional fine art quality. Colors should be bold and rich across the entire spectrum.',
+                
+                watercolor: 'Watercolor and ink style with beautiful flowing COLORS. Wet-on-wet technique showing color bleeding and blending naturally across paper. Soft edges where colors meet and blend together. Translucent, luminous colors with layered washes creating depth. Visible water blooms and granulation effects. Ink outlines combined with watercolor washes. Paper texture visible with white areas showing through. IMPORTANT: Use vibrant yet soft colors - blues, greens, warm earth tones, purples, pinks, bright accents. Natural color gradients and transitions. Organic, flowing feel with unpredictable color spreads. Light, airy, and painterly with visible brush marks and water effects. Full spectrum of colors, not monochrome.',
+                
+                sketch: 'Colored sketch or charcoal drawing style with vibrant COLOR application. Rough, expressive drawing with visible paper grain and texture. Charcoal or pencil marks as foundation. Loose, gestural lines with varying pressure. IMPORTANT: Colors applied boldly with colored pencils, pastels, or markers - use full range of hues including reds, blues, greens, yellows, purples. The colors should be saturated and vibrant, NOT just tinted grays. Visible paper texture throughout. Smudging and blending for depth. Energetic, spontaneous feel. Rich and varied color palette using the full spectrum. Sketch lines visible but enhanced with vibrant colored fills and accents. Professional quality with full color application. This is NOT a grayscale image - it must have rich, bold colors throughout.'
+            };
+
+            const handleStylePresetClick = (preset) => {
+                if (stylePreset === preset) {
+                    setStylePreset(null);
+                } else {
+                    setStylePreset(preset);
+                }
+            };
+
+            const getActiveStylePrompt = () => {
+                if (stylePreset && stylePresets[stylePreset]) {
+                    return stylePresets[stylePreset];
+                }
+                return stylePrompt;
+            };
+
+            // Available models
+            const models = [
+                { id: 'gemini-2.5-flash-image', name: 'Nano Banana (Fast - 5s, 1:1만)', badge: '⚡ Fast' },
+                { id: 'gemini-3-pro-image-preview', name: 'Nano Banana Pro (Best Quality, 모든 비율)', badge: '✨ Best' },
+            ];
+
+            // Initialize IndexedDB and load API key
+            useEffect(() => {
+                initDB().then(() => {
+                    loadImagesFromDB().then(images => {
+                        setImageHistory(images);
+                    });
+                });
+                
+                const saved = localStorage.getItem('gemini_api_key');
+                if (saved) setApiKey(saved);
+            }, []);
+
+            const saveApiKey = () => {
+                localStorage.setItem('gemini_api_key', apiKey);
+                alert('API 키가 저장되었습니다 / API Key saved');
+            };
+
+            const saveToHistory = async (imageData, scenePrompt, settings) => {
+                try {
+                    const historyItem = {
+                        id: Date.now(),
+                        image: imageData,
+                        prompt: scenePrompt,
+                        characterDescription: settings.characterDescription,
+                        stylePreset: settings.stylePreset,
+                        model: settings.model,
+                        aspectRatio: settings.aspectRatio,
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    await saveImageToDB(historyItem);
+                    
+                    // Reload images from DB
+                    const images = await loadImagesFromDB();
+                    setImageHistory(images);
+                } catch (error) {
+                    console.error('Error saving to history:', error);
+                }
+            };
+
+            const deleteFromHistory = async (id) => {
+                try {
+                    await deleteImageFromDB(id);
+                    const images = await loadImagesFromDB();
+                    setImageHistory(images);
+                } catch (error) {
+                    console.error('Error deleting from history:', error);
+                }
+            };
+
+            const clearHistory = async () => {
+                if (confirm('모든 이미지 기록을 삭제하시겠습니까? / Clear all image history?')) {
+                    try {
+                        await clearAllImagesFromDB();
+                        setImageHistory([]);
+                    } catch (error) {
+                        console.error('Error clearing history:', error);
+                    }
+                }
+            };
+
+            const handleReferenceImageUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        setReferenceImage(reader.result);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const addScene = () => {
+                setScenes(prevScenes => [...prevScenes, {
+                    id: Date.now(),
+                    prompt: '',
+                    generatedImage: null,
+                    loading: false,
+                    error: null
+                }]);
+            };
+
+            const removeScene = (id) => {
+                setScenes(prevScenes => prevScenes.filter(scene => scene.id !== id));
+            };
+
+            const updateScenePrompt = (id, prompt) => {
+                setScenes(prevScenes => prevScenes.map(scene =>
+                    scene.id === id ? { ...scene, prompt } : scene
+                ));
+            };
+
+            const buildFullPrompt = (scenePrompt) => {
+                let fullPrompt = '';
+                
+                if (characterDescription.trim()) {
+                    fullPrompt += `Character description: ${characterDescription}\n\n`;
+                }
+                
+                const activeStyle = getActiveStylePrompt();
+                if (activeStyle.trim()) {
+                    fullPrompt += `Style: ${activeStyle}\n\n`;
+                }
+                
+                fullPrompt += `Scene: ${scenePrompt}`;
+                
+                if (negativePrompt.trim()) {
+                    fullPrompt += `\n\nAvoid: ${negativePrompt}`;
+                }
+                
+                return fullPrompt;
+            };
+
+            const generateImage = async (sceneId) => {
+                // Get the scene from current state
+                let scene = scenes.find(s => s.id === sceneId);
+                if (!scene || !scene.prompt.trim()) {
+                    alert('장면 설명을 입력하세요 / Please enter scene description');
+                    return null;
+                }
+
+                if (!apiKey.trim()) {
+                    alert('Gemini API 키를 입력하세요 / Please enter Gemini API key');
+                    return null;
+                }
+
+                setScenes(prevScenes => prevScenes.map(s =>
+                    s.id === sceneId ? { ...s, loading: true, error: null } : s
+                ));
+
+                try {
+                    const fullPrompt = buildFullPrompt(scene.prompt);
+                    
+                    const parts = [];
+                    
+                    if (referenceImage) {
+                        parts.push({
+                            inline_data: {
+                                mime_type: 'image/png',
+                                data: referenceImage.split(',')[1]
+                            }
+                        });
+                        parts.push({
+                            text: `Using the style of the provided reference image, create: ${fullPrompt}`
+                        });
+                    } else {
+                        parts.push({
+                            text: fullPrompt
+                        });
+                    }
+
+                    const requestBody = {
+                        contents: [{
+                            parts: parts
+                        }]
+                    };
+
+                    if (selectedModel === 'gemini-3-pro-image-preview') {
+                        requestBody.generationConfig = {
+                            imageConfig: {
+                                aspectRatio: aspectRatio,
+                                imageSize: '1K'
+                            }
+                        };
+                    }
+                    
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(requestBody)
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    
+                    if (data.candidates && data.candidates[0]?.content?.parts) {
+                        const parts = data.candidates[0].content.parts;
+                        
+                        const imagePart = parts.find(part => 
+                            (part.inlineData || part.inline_data) && !part.thought
+                        );
+                        
+                        if (imagePart) {
+                            const inlineData = imagePart.inlineData || imagePart.inline_data;
+                            const mimeType = inlineData.mimeType || inlineData.mime_type || 'image/png';
+                            const imageData = inlineData.data;
+                            const imageUrl = `data:${mimeType};base64,${imageData}`;
+                            
+                            setScenes(prevScenes => prevScenes.map(s =>
+                                s.id === sceneId ? {
+                                    ...s,
+                                    generatedImage: imageUrl,
+                                    loading: false,
+                                    error: null
+                                } : s
+                            ));
+                            
+                            // Save to IndexedDB gallery (non-blocking)
+                            saveToHistory(imageUrl, scene.prompt, {
+                                characterDescription,
+                                stylePreset: stylePreset || 'custom',
+                                model: selectedModel,
+                                aspectRatio
+                            });
+                            
+                            return imageUrl;
+                        } else {
+                            throw new Error('응답에 이미지 데이터가 없습니다 / No image data in response');
+                        }
+                    } else {
+                        throw new Error('Invalid response structure');
+                    }
+
+                } catch (error) {
+                    console.error('Error:', error);
+                    setScenes(prevScenes => prevScenes.map(s =>
+                        s.id === sceneId ? {
+                            ...s,
+                            loading: false,
+                            error: error.message
+                        } : s
+                    ));
+                    return null;
+                }
+            };
+
+            const generateImageWithReference = async (sceneId, referenceImageUrl) => {
+                // Get the scene from current state
+                let scene = scenes.find(s => s.id === sceneId);
+                if (!scene || !scene.prompt.trim()) {
+                    return;
+                }
+
+                if (!apiKey.trim()) {
+                    alert('Gemini API 키를 입력하세요 / Please enter Gemini API key');
+                    return;
+                }
+
+                setScenes(prevScenes => prevScenes.map(s =>
+                    s.id === sceneId ? { ...s, loading: true, error: null } : s
+                ));
+
+                try {
+                    const fullPrompt = buildFullPrompt(scene.prompt);
+                    
+                    const parts = [];
+                    
+                    const base64Data = referenceImageUrl.split(',')[1];
+                    parts.push({
+                        inline_data: {
+                            mime_type: 'image/png',
+                            data: base64Data
+                        }
+                    });
+                    
+                    if (referenceImage) {
+                        parts.push({
+                            inline_data: {
+                                mime_type: 'image/png',
+                                data: referenceImage.split(',')[1]
+                            }
+                        });
+                    }
+                    
+                    parts.push({
+                        text: `IMPORTANT: Maintain the EXACT SAME character appearance, facial features, clothing, and overall style as shown in the reference image(s). Keep complete visual consistency with the reference. Create this NEW scene: ${fullPrompt}. The character(s) must look IDENTICAL to the reference image - same face, same hair, same clothing, same art style.`
+                    });
+
+                    const requestBody = {
+                        contents: [{
+                            parts: parts
+                        }]
+                    };
+
+                    if (selectedModel === 'gemini-3-pro-image-preview') {
+                        requestBody.generationConfig = {
+                            imageConfig: {
+                                aspectRatio: aspectRatio,
+                                imageSize: '1K'
+                            }
+                        };
+                    }
+                    
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(requestBody)
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    
+                    if (data.candidates && data.candidates[0]?.content?.parts) {
+                        const parts = data.candidates[0].content.parts;
+                        
+                        const imagePart = parts.find(part => 
+                            (part.inlineData || part.inline_data) && !part.thought
+                        );
+                        
+                        if (imagePart) {
+                            const inlineData = imagePart.inlineData || imagePart.inline_data;
+                            const mimeType = inlineData.mimeType || inlineData.mime_type || 'image/png';
+                            const imageData = inlineData.data;
+                            const imageUrl = `data:${mimeType};base64,${imageData}`;
+                            
+                            setScenes(prevScenes => prevScenes.map(s =>
+                                s.id === sceneId ? {
+                                    ...s,
+                                    generatedImage: imageUrl,
+                                    loading: false,
+                                    error: null
+                                } : s
+                            ));
+                            
+                            // Save to IndexedDB gallery (non-blocking)
+                            saveToHistory(imageUrl, scene.prompt, {
+                                characterDescription,
+                                stylePreset: stylePreset || 'custom',
+                                model: selectedModel,
+                                aspectRatio
+                            });
+                        } else {
+                            throw new Error('응답에 이미지 데이터가 없습니다 / No image data in response');
+                        }
+                    } else {
+                        throw new Error('Invalid response structure');
+                    }
+
+                } catch (error) {
+                    console.error('Error:', error);
+                    setScenes(prevScenes => prevScenes.map(s =>
+                        s.id === sceneId ? {
+                            ...s,
+                            loading: false,
+                            error: error.message
+                        } : s
+                    ));
+                }
+            };
+
+            const generateAllScenes = async () => {
+                // Get current scenes at the start
+                let currentScenes = scenes;
+                const scenesToGenerate = currentScenes.filter(s => s.prompt.trim() && !s.loading);
+                
+                if (scenesToGenerate.length === 0) {
+                    alert('생성할 장면이 없습니다 / No scenes to generate');
+                    return;
+                }
+
+                try {
+                    const firstScene = scenesToGenerate[0];
+                    const firstSceneImage = await generateImage(firstScene.id);
+                    
+                    if (!firstSceneImage) {
+                        alert('첫 번째 장면 생성 실패. 계속 진행할 수 없습니다 / First scene generation failed');
+                        return;
+                    }
+                    
+                    // Wait for state to update
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    
+                    // Generate remaining scenes sequentially
+                    for (let i = 1; i < scenesToGenerate.length; i++) {
+                        const scene = scenesToGenerate[i];
+                        await generateImageWithReference(scene.id, firstSceneImage);
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                    
+                    alert(`모든 장면 생성 완료! (${scenesToGenerate.length}개) / All scenes generated!`);
+                } catch (error) {
+                    console.error('Generate all scenes error:', error);
+                    alert('장면 생성 중 오류가 발생했습니다 / Error during scene generation: ' + error.message);
+                }
+            };
+
+            const downloadImage = (imageUrl, sceneId) => {
+                try {
+                    const link = document.createElement('a');
+                    link.href = imageUrl;
+                    link.download = `gemini-scene-${sceneId}-${Date.now()}.png`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                } catch (error) {
+                    console.error('Download error:', error);
+                    window.open(imageUrl, '_blank');
+                }
+            };
+
+            return (
+                <div className="min-h-screen p-6">
+                    <div className="max-w-7xl mx-auto">
+                        {/* Header */}
+                        <div className="gemini-gradient rounded-lg shadow-md p-6 mb-6 text-white">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <h1 className="text-3xl font-bold mb-2">
+                                        🍌 뉴스 일러스트 생성기 (Gemini Nano Banana)
+                                    </h1>
+                                    <p className="text-white/90">
+                                        News Illustration Generator - 5가지 스타일: 삽화 / 사진 / 임파스토 / 수채화 / 스케치 ✨
+                                    </p>
+                                    <p className="text-sm text-white/80 mt-2">
+                                        💎 Gemini Pro 구독 포함! ⚡ 1K 고속 생성 (5-15초) / Free with Gemini Pro! Fast 1K generation
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => setShowGallery(true)}
+                                    className="px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-lg transition flex items-center gap-2"
+                                >
+                                    🖼️ 갤러리 ({imageHistory.length})
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* API Key Section */}
+                        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                            <h2 className="text-xl font-semibold mb-4">🔑 Gemini API 설정 / API Settings</h2>
+                            <div className="flex gap-2 mb-3">
+                                <input
+                                    type="password"
+                                    value={apiKey}
+                                    onChange={(e) => setApiKey(e.target.value)}
+                                    placeholder="Gemini API Key (AIza...)"
+                                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                                <button
+                                    onClick={saveApiKey}
+                                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                                >
+                                    저장 / Save
+                                </button>
+                            </div>
+                            <p className="text-sm text-gray-600">
+                                API 키는 브라우저에만 저장되며 어디에도 전송되지 않습니다. 
+                                <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline ml-1">
+                                    여기서 키 발급 / Get your key here
+                                </a>
+                            </p>
+                        </div>
+
+                        {/* Reference Image Upload */}
+                        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                            <h2 className="text-xl font-semibold mb-4">🖼️ 참조 이미지 업로드 (선택사항) / Reference Image Upload (Optional)</h2>
+                            <p className="text-sm text-gray-600 mb-3">
+                                스타일 참조용 이미지를 업로드하면 해당 스타일로 생성됩니다 / 
+                                Upload an image to match its style in generated images
+                            </p>
+                            
+                            <div className="mb-4">
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleReferenceImageUpload}
+                                    className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                                />
+                            </div>
+
+                            {referenceImage && (
+                                <div className="space-y-3">
+                                    <div className="border border-gray-200 rounded-lg p-2">
+                                        <img
+                                            src={referenceImage}
+                                            alt="Reference"
+                                            className="max-h-64 mx-auto rounded"
+                                        />
+                                    </div>
+                                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                                        <p className="text-green-800 text-sm font-medium">
+                                            ✅ 참조 이미지 준비됨! 모든 장면에 이 스타일이 적용됩니다 / Reference ready! This style will be applied to all scenes
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Model & Settings */}
+                        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                            <h2 className="text-xl font-semibold mb-4">⚙️ 모델 및 스타일 설정 / Model & Style Settings</h2>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        🍌 모델 선택 / Model Selection
+                                    </label>
+                                    <select
+                                        value={selectedModel}
+                                        onChange={(e) => setSelectedModel(e.target.value)}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        {models.map(model => (
+                                            <option key={model.id} value={model.id}>
+                                                {model.badge} {model.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        📐 화면 비율 / Aspect Ratio
+                                        {selectedModel === 'gemini-2.5-flash-image' && (
+                                            <span className="text-xs text-orange-600 ml-2">(Flash 모델은 1:1만 지원 / Flash model: 1:1 only)</span>
+                                        )}
+                                    </label>
+                                    <select
+                                        value={aspectRatio}
+                                        onChange={(e) => setAspectRatio(e.target.value)}
+                                        disabled={selectedModel === 'gemini-2.5-flash-image'}
+                                        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${
+                                            selectedModel === 'gemini-2.5-flash-image'
+                                                ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
+                                                : 'border-gray-300'
+                                        }`}
+                                    >
+                                        <option value="1:1">1:1 (Square)</option>
+                                        <option value="3:4">3:4 (Portrait)</option>
+                                        <option value="4:3">4:3 (Landscape)</option>
+                                        <option value="9:16">9:16 (Tall)</option>
+                                        <option value="16:9">16:9 (Wide)</option>
+                                    </select>
+                                    {selectedModel === 'gemini-2.5-flash-image' && (
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            Nano Banana (Flash)는 1:1만 지원. Pro 모델을 선택하면 다양한 비율 사용 가능 / 
+                                            Flash model only supports 1:1. Use Pro for custom ratios
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    👤 캐릭터 설명 (일관성 유지에 필수!) / Character Description (Essential for consistency!)
+                                </label>
+                                <textarea
+                                    value={characterDescription}
+                                    onChange={(e) => setCharacterDescription(e.target.value)}
+                                    placeholder="예: 40대 한국인 남성, 검은 정장, 회색 넥타이, 짧은 검은 머리, 진지한 표정, 안경 착용 / e.g., Korean male in 40s, black suit, gray tie, short black hair, serious expression, wearing glasses"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    rows="3"
+                                />
+                                <p className="text-xs text-gray-600 mt-1">
+                                    💡 상세할수록 더 일관된 캐릭터 생성! 첫 장면에 특히 중요합니다 / More details = better consistency! Critical for first scene
+                                </p>
+                            </div>
+
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-3">
+                                    스타일 선택 / Style Selection
+                                </label>
+                                <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-3">
+                                    <button
+                                        onClick={() => handleStylePresetClick('illustration')}
+                                        className={`px-3 py-3 rounded-lg border-2 transition text-left ${
+                                            stylePreset === 'illustration'
+                                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                                : 'border-gray-300 hover:border-blue-300 text-gray-700'
+                                        }`}
+                                    >
+                                        <div className="flex flex-col">
+                                            <div className="flex items-start justify-between mb-1">
+                                                <div className="font-semibold text-sm">
+                                                    🎨 삽화스타일
+                                                </div>
+                                                {stylePreset === 'illustration' && (
+                                                    <span className="text-base text-blue-600">✓</span>
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-gray-600">
+                                                그래픽 노블<br/>
+                                                Graphic Novel
+                                            </div>
+                                        </div>
+                                    </button>
+
+                                    <button
+                                        onClick={() => handleStylePresetClick('photo')}
+                                        className={`px-3 py-3 rounded-lg border-2 transition text-left ${
+                                            stylePreset === 'photo'
+                                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                                : 'border-gray-300 hover:border-blue-300 text-gray-700'
+                                        }`}
+                                    >
+                                        <div className="flex flex-col">
+                                            <div className="flex items-start justify-between mb-1">
+                                                <div className="font-semibold text-sm">
+                                                    📷 사진스타일
+                                                </div>
+                                                {stylePreset === 'photo' && (
+                                                    <span className="text-base text-blue-600">✓</span>
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-gray-600">
+                                                포토리얼리스틱<br/>
+                                                Photorealistic
+                                            </div>
+                                        </div>
+                                    </button>
+
+                                    <button
+                                        onClick={() => handleStylePresetClick('impasto')}
+                                        className={`px-3 py-3 rounded-lg border-2 transition text-left ${
+                                            stylePreset === 'impasto'
+                                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                                : 'border-gray-300 hover:border-blue-300 text-gray-700'
+                                        }`}
+                                    >
+                                        <div className="flex flex-col">
+                                            <div className="flex items-start justify-between mb-1">
+                                                <div className="font-semibold text-sm">
+                                                    🎨 임파스토
+                                                </div>
+                                                {stylePreset === 'impasto' && (
+                                                    <span className="text-base text-blue-600">✓</span>
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-gray-600">
+                                                두꺼운 물감<br/>
+                                                Thick Paint
+                                            </div>
+                                        </div>
+                                    </button>
+
+                                    <button
+                                        onClick={() => handleStylePresetClick('watercolor')}
+                                        className={`px-3 py-3 rounded-lg border-2 transition text-left ${
+                                            stylePreset === 'watercolor'
+                                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                                : 'border-gray-300 hover:border-blue-300 text-gray-700'
+                                        }`}
+                                    >
+                                        <div className="flex flex-col">
+                                            <div className="flex items-start justify-between mb-1">
+                                                <div className="font-semibold text-sm">
+                                                    💧 수채화
+                                                </div>
+                                                {stylePreset === 'watercolor' && (
+                                                    <span className="text-base text-blue-600">✓</span>
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-gray-600">
+                                                번지는 물감<br/>
+                                                Watercolor
+                                            </div>
+                                        </div>
+                                    </button>
+
+                                    <button
+                                        onClick={() => handleStylePresetClick('sketch')}
+                                        className={`px-3 py-3 rounded-lg border-2 transition text-left ${
+                                            stylePreset === 'sketch'
+                                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                                : 'border-gray-300 hover:border-blue-300 text-gray-700'
+                                        }`}
+                                    >
+                                        <div className="flex flex-col">
+                                            <div className="flex items-start justify-between mb-1">
+                                                <div className="font-semibold text-sm">
+                                                    ✏️ 스케치
+                                                </div>
+                                                {stylePreset === 'sketch' && (
+                                                    <span className="text-base text-blue-600">✓</span>
+                                                )}
+                                            </div>
+                                            <div className="text-xs text-gray-600">
+                                                색연필/목탄<br/>
+                                                Sketch
+                                            </div>
+                                        </div>
+                                    </button>
+                                </div>
+                                
+                                {stylePreset && (
+                                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+                                        <strong>
+                                            {stylePreset === 'illustration' && '🎨 삽화스타일 (그래픽 노블)'}
+                                            {stylePreset === 'photo' && '📷 사진스타일 (포토리얼리스틱)'}
+                                            {stylePreset === 'impasto' && '🎨 임파스토 (두꺼운 물감)'}
+                                            {stylePreset === 'watercolor' && '💧 수채화 (번지는 물감)'}
+                                            {stylePreset === 'sketch' && '✏️ 스케치 (색연필/목탄)'}
+                                        </strong> 선택됨 / 버튼을 다시 클릭하면 수동 입력으로 전환됩니다
+                                    </div>
+                                )}
+                                {!stylePreset && (
+                                    <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600">
+                                        위 프리셋 중 하나를 선택하거나 아래에서 직접 스타일을 입력하세요 / 
+                                        Select a preset above or enter custom style below
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    스타일 프롬프트 / Style Prompt (수동 입력)
+                                </label>
+                                <textarea
+                                    value={stylePrompt}
+                                    onChange={(e) => setStylePrompt(e.target.value)}
+                                    placeholder="예: 수채화 스타일, 파스텔 톤 / e.g., Watercolor style, pastel tones"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    rows="2"
+                                    disabled={!!stylePreset}
+                                />
+                                {stylePreset && (
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        스타일 프리셋이 선택되어 수동 입력이 비활성화되었습니다 / 
+                                        Manual input disabled while style preset is selected
+                                    </p>
+                                )}
+                            </div>
+
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    제외할 요소 / Negative Prompt
+                                </label>
+                                <textarea
+                                    value={negativePrompt}
+                                    onChange={(e) => setNegativePrompt(e.target.value)}
+                                    placeholder="예: 만화풍, 3D 렌더링 / e.g., cartoon style, 3D render"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    rows="2"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Scenes */}
+                        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className="text-xl font-semibold">📽️ 장면 관리 / Scene Management</h2>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={generateAllScenes}
+                                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                                    >
+                                        ⚡ 모든 장면 생성 / Generate All
+                                    </button>
+                                    <button
+                                        onClick={addScene}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                                    >
+                                        + 장면 추가 / Add Scene
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Consistency Info */}
+                            <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                                <h3 className="font-semibold text-green-900 mb-2">✨ 인물/스타일 통일성 유지 / Character Consistency</h3>
+                                <p className="text-sm text-green-800">
+                                    <strong>"모든 장면 생성"</strong> 버튼을 사용하면:<br/>
+                                    1️⃣ 첫 번째 장면이 먼저 생성됩니다<br/>
+                                    2️⃣ 첫 장면의 캐릭터/스타일이 <strong>참조 이미지로 자동 설정</strong><br/>
+                                    3️⃣ 나머지 장면들이 <strong>동일한 캐릭터/스타일</strong>로 생성됩니다<br/>
+                                    <br/>
+                                    <strong>"Generate All"</strong> button ensures consistency:<br/>
+                                    First scene → Used as reference → All scenes match the same character/style
+                                </p>
+                            </div>
+
+                            <div className="space-y-4">
+                                {scenes.map((scene, index) => (
+                                    <div key={scene.id} className="scene-card border border-gray-200 rounded-lg p-4">
+                                        <div className="flex justify-between items-start mb-3">
+                                            <h3 className="font-semibold text-lg">
+                                                {index === 0 ? (
+                                                    <span className="text-green-600">
+                                                        🌟 장면 1 (기준 장면) / Scene 1 (Reference Scene)
+                                                    </span>
+                                                ) : (
+                                                    <span>장면 {index + 1} / Scene {index + 1}</span>
+                                                )}
+                                            </h3>
+                                            {scenes.length > 1 && (
+                                                <button
+                                                    onClick={() => removeScene(scene.id)}
+                                                    className="text-red-600 hover:text-red-800"
+                                                >
+                                                    삭제 / Remove
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        <div className="mb-3">
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                {index === 0 ? (
+                                                    <span className="text-green-700">
+                                                        📝 장면 설명 (모든 장면의 기준이 됩니다!) / Scene Description (This sets the reference!)
+                                                    </span>
+                                                ) : (
+                                                    <span>장면 설명 / Scene Description</span>
+                                                )}
+                                            </label>
+                                            <textarea
+                                                value={scene.prompt}
+                                                onChange={(e) => updateScenePrompt(scene.id, e.target.value)}
+                                                placeholder={index === 0 
+                                                    ? "예: 복도에서 조사하는 경찰관 3명, 심각한 분위기. 이 장면의 캐릭터가 모든 장면에 사용됩니다! / e.g., 3 police officers investigating in hallway, serious atmosphere. These characters will be used for all scenes!"
+                                                    : "예: 사무실에서 증거를 분석하는 같은 경찰관들 / e.g., Same officers analyzing evidence in office"
+                                                }
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                                rows="3"
+                                            />
+                                            {index === 0 && (
+                                                <p className="text-xs text-green-600 mt-1 font-medium">
+                                                    ⚠️ 첫 장면의 캐릭터/구도가 나머지 모든 장면의 기준이 됩니다! / First scene sets character/composition for all scenes!
+                                                </p>
+                                            )}
+                                        </div>
+
+                                        <div className="flex gap-2 mb-3">
+                                            <button
+                                                onClick={() => generateImage(scene.id)}
+                                                disabled={scene.loading}
+                                                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition"
+                                            >
+                                                {scene.loading ? '생성 중... / Generating...' : '이미지 생성 / Generate Image'}
+                                            </button>
+                                        </div>
+
+                                        {scene.loading && (
+                                            <div className="flex justify-center py-4">
+                                                <div className="loading-spinner"></div>
+                                            </div>
+                                        )}
+
+                                        {scene.error && (
+                                            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                                                <strong>오류 / Error:</strong> {scene.error}
+                                            </div>
+                                        )}
+
+                                        {scene.generatedImage && !scene.loading && (
+                                            <div className="space-y-3">
+                                                <div className="border border-gray-200 rounded-lg p-2">
+                                                    <img
+                                                        src={scene.generatedImage}
+                                                        alt={`Scene ${index + 1}`}
+                                                        className="w-full rounded"
+                                                    />
+                                                </div>
+                                                <button
+                                                    onClick={() => downloadImage(scene.generatedImage, scene.id)}
+                                                    className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                                                >
+                                                    💾 이미지 다운로드 / Download Image
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Tips Section */}
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+                            <h3 className="font-semibold text-blue-900 mb-3">💡 Nano Banana 사용 팁 / Tips</h3>
+                            <ul className="space-y-2 text-sm text-blue-800">
+                                <li>
+                                    <strong>🍌 모델 선택:</strong> Nano Banana (Fast)는 초고속이지만 1:1만 지원. Nano Banana Pro는 다양한 화면비율 + 더 높은 품질 지원 / 
+                                    Nano Banana (Fast) is super-fast but 1:1 only. Nano Banana Pro supports custom aspect ratios + better quality
+                                </li>
+                                <li>
+                                    <strong>✨ 캐릭터 통일성:</strong> <strong>"모든 장면 생성"</strong> 버튼을 사용하세요! 첫 장면이 참조 이미지로 자동 설정되어 모든 장면에서 동일한 캐릭터와 스타일이 유지됩니다. 개별 생성 시에는 통일성이 보장되지 않습니다. / 
+                                    <strong>Use "Generate All" button</strong> for character consistency! First scene becomes reference for all others, maintaining same character/style throughout
+                                </li>
+                                <li>
+                                    <strong>🎨 5가지 스타일 프리셋 (모두 컬러!):</strong><br/>
+                                    • <strong>삽화스타일</strong> - 그래픽 노블, 크로스해치, 거친 손그림<br/>
+                                    • <strong>사진스타일</strong> - 포토리얼리스틱, 뉴스 다큐멘터리<br/>
+                                    • <strong>임파스토</strong> - 두꺼운 물감, 입체적 붓자국 (유화/아크릴)<br/>
+                                    • <strong>수채화</strong> - 번지는 물감, 부드러운 색 전환<br/>
+                                    • <strong>스케치</strong> - 색연필/목탄, 종이 질감<br/>
+                                    Five colored styles: Graphic Novel / Photo / Impasto / Watercolor / Sketch
+                                </li>
+                                <li>
+                                    <strong>🖼️ 참조 이미지:</strong> 이미지를 업로드하면 선택한 스타일과 함께 더 정확한 매칭! / 
+                                    Upload reference image with your chosen style for better matching!
+                                </li>
+                                <li>
+                                    <strong>📐 화면 비율:</strong> 다양한 비율이 필요하면 Nano Banana Pro 모델 사용 (16:9, 3:4, 9:16 등) / 
+                                    Need custom aspect ratios? Use Nano Banana Pro model (16:9, 3:4, 9:16, etc.)
+                                </li>
+                                <li>
+                                    <strong>⚡ 빠른 생성:</strong> 1K 해상도로 5-15초 내 초고속 생성! / 
+                                    1K resolution ensures super-fast generation (5-15 seconds)
+                                </li>
+                                <li>
+                                    <strong>💎 무료:</strong> Gemini Pro 구독에 포함! / 
+                                    Included in Gemini Pro subscription!
+                                </li>
+                                <li>
+                                    <strong>🖼️ 갤러리 기능:</strong> 모든 생성된 이미지가 IndexedDB에 자동 저장됩니다! 브라우저를 닫아도 유지되며, 용량 제한 없이 많은 이미지를 저장할 수 있습니다. / 
+                                    Gallery feature: All generated images are automatically saved to IndexedDB! Persists after closing browser with unlimited storage!
+                                </li>
+                            </ul>
+                        </div>
+
+                        {/* Image Gallery Modal */}
+                        {showGallery && (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowGallery(false)}>
+                                <div className="bg-white rounded-lg max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+                                    {/* Gallery Header */}
+                                    <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+                                        <div>
+                                            <h2 className="text-2xl font-bold">🖼️ 이미지 갤러리 / Image Gallery</h2>
+                                            <p className="text-sm text-gray-600 mt-1">
+                                                저장된 이미지: {imageHistory.length}개 / {imageHistory.length} saved images
+                                            </p>
+                                            <p className="text-xs text-green-600 mt-1">
+                                                ✅ IndexedDB에 저장 - 브라우저를 닫아도 유지됩니다! / Saved in IndexedDB - persists after closing browser!
+                                            </p>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            {imageHistory.length > 0 && (
+                                                <button
+                                                    onClick={clearHistory}
+                                                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                                                >
+                                                    전체 삭제 / Clear All
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={() => setShowGallery(false)}
+                                                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition"
+                                            >
+                                                닫기 / Close
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Gallery Content */}
+                                    <div className="flex-1 overflow-y-auto p-6">
+                                        {imageHistory.length === 0 ? (
+                                            <div className="text-center py-12">
+                                                <p className="text-gray-500 text-lg">생성된 이미지가 없습니다 / No images generated yet</p>
+                                                <p className="text-gray-400 text-sm mt-2">이미지를 생성하면 여기에 자동으로 저장됩니다</p>
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                {imageHistory.map((item) => (
+                                                    <div key={item.id} className="border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition">
+                                                        {/* Image */}
+                                                        <div className="aspect-square bg-gray-100">
+                                                            <img
+                                                                src={item.image}
+                                                                alt="Generated"
+                                                                className="w-full h-full object-cover"
+                                                            />
+                                                        </div>
+
+                                                        {/* Info */}
+                                                        <div className="p-3 bg-white">
+                                                            <div className="text-xs text-gray-500 mb-2">
+                                                                {new Date(item.timestamp).toLocaleString('ko-KR')}
+                                                            </div>
+                                                            
+                                                            {/* Style & Model */}
+                                                            <div className="flex gap-2 mb-2 flex-wrap">
+                                                                <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">
+                                                                    {item.stylePreset === 'illustration' && '🎨 삽화'}
+                                                                    {item.stylePreset === 'photo' && '📷 사진'}
+                                                                    {item.stylePreset === 'impasto' && '🎨 임파스토'}
+                                                                    {item.stylePreset === 'watercolor' && '💧 수채화'}
+                                                                    {item.stylePreset === 'sketch' && '✏️ 스케치'}
+                                                                    {item.stylePreset === 'custom' && '⚙️ 커스텀'}
+                                                                </span>
+                                                                <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">
+                                                                    {item.aspectRatio}
+                                                                </span>
+                                                            </div>
+
+                                                            {/* Prompt */}
+                                                            <p className="text-sm text-gray-700 mb-2 line-clamp-2">
+                                                                {item.prompt}
+                                                            </p>
+
+                                                            {/* Character Description */}
+                                                            {item.characterDescription && (
+                                                                <p className="text-xs text-gray-500 mb-3 line-clamp-1">
+                                                                    👤 {item.characterDescription}
+                                                                </p>
+                                                            )}
+
+                                                            {/* Actions */}
+                                                            <div className="flex gap-2">
+                                                                <button
+                                                                    onClick={() => downloadImage(item.image, item.id)}
+                                                                    className="flex-1 px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition"
+                                                                >
+                                                                    💾 다운로드
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => deleteFromHistory(item.id)}
+                                                                    className="px-3 py-1.5 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition"
+                                                                >
+                                                                    🗑️
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<NewsIllustrationGenerator />, document.getElementById('root'));
+    </script>
+</body>
+</html>
