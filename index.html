@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>뉴스 일러스트 생성기 (Gemini Nano Banana) / News Illustration Generator</title>
+    <title>뉴스 일러스트 생성기 (Gemini AI) / News Illustration Generator</title>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -140,7 +140,7 @@
             const [referenceImage, setReferenceImage] = useState(null);
             
             // Gemini Nano Banana settings
-            const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash-image');
+            const [selectedModel, setSelectedModel] = useState('gemini-2.0-flash-exp');
             const [aspectRatio, setAspectRatio] = useState('1:1');
             
             // Style preset selection
@@ -154,7 +154,7 @@
             const stylePresets = {
                 illustration: 'Generate an image in a gritty, hand-drawn graphic novel storyboard style. The aesthetic should resemble colored pencil and rough ink on textured paper. Key features must include: sketch-like black outlines, heavy cross-hatch shading instead of smooth gradients, and a muted, desaturated color palette. The background should be looser and hazier than the subjects, focusing on the action with a serious, tense tone. Line Work & Texture: Rough outlines with distinct black lines that are not clean vectors but sketchy, slightly wobbly, and hand-drawn with pen or rough pencil. Cross-hatching for shading and depth using lots of small intersecting lines and scratches instead of smooth gradients. Paper texture with underlying grain looking like rough, fibrous paper rather than digital. Color Palette: Muted and desaturated with no bright neons or vibrant colors, feeling washed out, earthy, and somber with lots of greys, browns, dull blues, and olive greens. Colored pencil feel with dry media showing strokes. Mood & Composition: Gritty serious tone suited for crime dramas, thrillers, or serious situations, not cartoonish or cute. Storyboard aesthetic focusing heavily on character action and poses, often blurring or simplifying background details to keep focus on the narrative moment.',
                 
-                photo: 'A photorealistic, hyper-realistic digitally rendered scene in the style of Korean reenactments. Professional broadcast photography, sharp focus, high detail, natural lighting, documentary photography aesthetic, journalism style, crisp details, photojournalism quality, realistic textures, professional camera work, clean professional look.',
+                photo: 'A photorealistic, hyper-realistic digitally rendered scene in the style of Korean news reenactments. Professional broadcast photography, sharp focus, high detail, natural lighting, documentary photography aesthetic, news journalism style, crisp details, photojournalism quality, realistic textures, professional camera work, broadcast news quality, Korean news station production value, clean professional look.',
                 
                 impasto: 'Thick paint impasto style with rich, vibrant COLORS. Heavy textured paint strokes with visible depth and three-dimensional quality, simulating oil or acrylic paint applied with palette knife. The paint should have physical thickness with ridges and peaks. Bold, expressive colored brushwork. IMPORTANT: Use full color palette - blues, greens, reds, yellows, purples - not just neutral tones. Saturated, vivid colors showing paint depth. Canvas texture visible underneath. Painterly and expressive with dramatic color contrasts. Professional fine art quality. Colors should be bold and rich across the entire spectrum.',
                 
@@ -180,8 +180,9 @@
 
             // Available models
             const models = [
-                { id: 'gemini-2.5-flash-image', name: 'Nano Banana (Fast - 5s, 1:1만)', badge: '⚡ Fast' },
-                { id: 'gemini-3-pro-image-preview', name: 'Nano Banana Pro (Best Quality, 모든 비율)', badge: '✨ Best' },
+                { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Fast - 모든 비율)', badge: '⚡ Free' },
+                { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Stable)', badge: '✅ Stable' },
+                { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (Best Quality)', badge: '✨ Pro' },
             ];
 
             // Initialize IndexedDB and load API key
@@ -338,17 +339,14 @@
                     const requestBody = {
                         contents: [{
                             parts: parts
-                        }]
+                        }],
+                        generationConfig: {
+                            temperature: 1.0,
+                            topP: 0.95,
+                            topK: 40,
+                            maxOutputTokens: 8192,
+                        }
                     };
-
-                    if (selectedModel === 'gemini-3-pro-image-preview') {
-                        requestBody.generationConfig = {
-                            imageConfig: {
-                                aspectRatio: aspectRatio,
-                                imageSize: '1K'
-                            }
-                        };
-                    }
                     
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`, {
                         method: 'POST',
@@ -360,7 +358,16 @@
 
                     if (!response.ok) {
                         const errorData = await response.json();
-                        throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
+                        let errorMessage = errorData.error?.message || `HTTP error! status: ${response.status}`;
+                        
+                        // Provide helpful Korean error messages
+                        if (errorMessage.includes('quota')) {
+                            errorMessage = `⚠️ API 사용량 한도 초과!\n\n해결 방법:\n1. 잠시 후 다시 시도 (무료 한도는 시간당 리셋)\n2. 다른 모델 선택 (위 드롭다운에서)\n3. Google AI Studio에서 API 사용량 확인: https://aistudio.google.com\n\n원본 오류: ${errorMessage}`;
+                        } else if (errorMessage.includes('API key')) {
+                            errorMessage = `🔑 API 키 오류!\n\nAPI 키를 확인하세요:\n1. https://aistudio.google.com/app/apikey 에서 키 발급\n2. 키가 활성화되어 있는지 확인\n\n원본 오류: ${errorMessage}`;
+                        }
+                        
+                        throw new Error(errorMessage);
                     }
 
                     const data = await response.json();
@@ -461,17 +468,14 @@
                     const requestBody = {
                         contents: [{
                             parts: parts
-                        }]
+                        }],
+                        generationConfig: {
+                            temperature: 1.0,
+                            topP: 0.95,
+                            topK: 40,
+                            maxOutputTokens: 8192,
+                        }
                     };
-
-                    if (selectedModel === 'gemini-3-pro-image-preview') {
-                        requestBody.generationConfig = {
-                            imageConfig: {
-                                aspectRatio: aspectRatio,
-                                imageSize: '1K'
-                            }
-                        };
-                    }
                     
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`, {
                         method: 'POST',
@@ -483,7 +487,16 @@
 
                     if (!response.ok) {
                         const errorData = await response.json();
-                        throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
+                        let errorMessage = errorData.error?.message || `HTTP error! status: ${response.status}`;
+                        
+                        // Provide helpful Korean error messages
+                        if (errorMessage.includes('quota')) {
+                            errorMessage = `⚠️ API 사용량 한도 초과!\n\n해결 방법:\n1. 잠시 후 다시 시도 (무료 한도는 시간당 리셋)\n2. 다른 모델 선택 (위 드롭다운에서)\n3. Google AI Studio에서 API 사용량 확인: https://aistudio.google.com\n\n원본 오류: ${errorMessage}`;
+                        } else if (errorMessage.includes('API key')) {
+                            errorMessage = `🔑 API 키 오류!\n\nAPI 키를 확인하세요:\n1. https://aistudio.google.com/app/apikey 에서 키 발급\n2. 키가 활성화되어 있는지 확인\n\n원본 오류: ${errorMessage}`;
+                        }
+                        
+                        throw new Error(errorMessage);
                     }
 
                     const data = await response.json();
@@ -594,13 +607,13 @@
                             <div className="flex justify-between items-start">
                                 <div>
                                     <h1 className="text-3xl font-bold mb-2">
-                                        🍌 뉴스 일러스트 생성기 (Gemini Nano Banana)
+                                        🎨 뉴스 일러스트 생성기 (Gemini AI)
                                     </h1>
                                     <p className="text-white/90">
                                         News Illustration Generator - 5가지 스타일: 삽화 / 사진 / 임파스토 / 수채화 / 스케치 ✨
                                     </p>
                                     <p className="text-sm text-white/80 mt-2">
-                                        💎 Gemini Pro 구독 포함! ⚡ 1K 고속 생성 (5-15초) / Free with Gemini Pro! Fast 1K generation
+                                        🤖 Powered by Gemini 2.0 Flash | 무료 API 사용 가능 / Free API available
                                     </p>
                                 </div>
                                 <button
@@ -680,7 +693,7 @@
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                                        🍌 모델 선택 / Model Selection
+                                        🤖 모델 선택 / Model Selection
                                     </label>
                                     <select
                                         value={selectedModel}
@@ -693,24 +706,19 @@
                                             </option>
                                         ))}
                                     </select>
+                                    <p className="text-xs text-gray-600 mt-1">
+                                        💡 Gemini 2.0 Flash 권장! 빠르고 무료 한도가 높습니다 / Recommended: Fast and high free quota
+                                    </p>
                                 </div>
 
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-2">
                                         📐 화면 비율 / Aspect Ratio
-                                        {selectedModel === 'gemini-2.5-flash-image' && (
-                                            <span className="text-xs text-orange-600 ml-2">(Flash 모델은 1:1만 지원 / Flash model: 1:1 only)</span>
-                                        )}
                                     </label>
                                     <select
                                         value={aspectRatio}
                                         onChange={(e) => setAspectRatio(e.target.value)}
-                                        disabled={selectedModel === 'gemini-2.5-flash-image'}
-                                        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${
-                                            selectedModel === 'gemini-2.5-flash-image'
-                                                ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
-                                                : 'border-gray-300'
-                                        }`}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                                     >
                                         <option value="1:1">1:1 (Square)</option>
                                         <option value="3:4">3:4 (Portrait)</option>
@@ -718,12 +726,9 @@
                                         <option value="9:16">9:16 (Tall)</option>
                                         <option value="16:9">16:9 (Wide)</option>
                                     </select>
-                                    {selectedModel === 'gemini-2.5-flash-image' && (
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            Nano Banana (Flash)는 1:1만 지원. Pro 모델을 선택하면 다양한 비율 사용 가능 / 
-                                            Flash model only supports 1:1. Use Pro for custom ratios
-                                        </p>
-                                    )}
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        참고: 이미지는 정사각형(1:1)으로 생성됩니다 / Note: Images are generated in square (1:1) format
+                                    </p>
                                 </div>
                             </div>
 
@@ -1052,44 +1057,35 @@
 
                         {/* Tips Section */}
                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-                            <h3 className="font-semibold text-blue-900 mb-3">💡 Nano Banana 사용 팁 / Tips</h3>
+                            <h3 className="font-semibold text-blue-900 mb-3">💡 사용 팁 / Usage Tips</h3>
                             <ul className="space-y-2 text-sm text-blue-800">
                                 <li>
-                                    <strong>🍌 모델 선택:</strong> Nano Banana (Fast)는 초고속이지만 1:1만 지원. Nano Banana Pro는 다양한 화면비율 + 더 높은 품질 지원 / 
-                                    Nano Banana (Fast) is super-fast but 1:1 only. Nano Banana Pro supports custom aspect ratios + better quality
+                                    <strong>🤖 모델 선택:</strong> Gemini 2.0 Flash 권장 (빠르고 무료 한도가 높음). API 한도 초과 시 다른 모델로 전환하세요 / 
+                                    Recommended: Gemini 2.0 Flash (fast and high free quota). Switch models if you hit rate limits
                                 </li>
                                 <li>
-                                    <strong>✨ 캐릭터 통일성:</strong> <strong>"모든 장면 생성"</strong> 버튼을 사용하세요! 첫 장면이 참조 이미지로 자동 설정되어 모든 장면에서 동일한 캐릭터와 스타일이 유지됩니다. 개별 생성 시에는 통일성이 보장되지 않습니다. / 
-                                    <strong>Use "Generate All" button</strong> for character consistency! First scene becomes reference for all others, maintaining same character/style throughout
+                                    <strong>⚠️ API 한도 초과 시:</strong> "quota exceeded" 오류가 나면 잠시 기다렸다가 재시도하거나, 다른 Gemini 모델을 선택하세요. Google AI Studio에서 사용량 확인 가능 / 
+                                    If you see "quota exceeded": wait and retry, or switch to another model. Check usage at Google AI Studio
+                                </li>
+                                <li>
+                                    <strong>✨ 캐릭터 통일성:</strong> <strong>"모든 장면 생성"</strong> 버튼을 사용하세요! 첫 장면이 참조 이미지로 자동 설정되어 모든 장면에서 동일한 캐릭터와 스타일이 유지됩니다 / 
+                                    <strong>Use "Generate All" button</strong> for character consistency!
                                 </li>
                                 <li>
                                     <strong>🎨 5가지 스타일 프리셋 (모두 컬러!):</strong><br/>
                                     • <strong>삽화스타일</strong> - 그래픽 노블, 크로스해치, 거친 손그림<br/>
                                     • <strong>사진스타일</strong> - 포토리얼리스틱, 뉴스 다큐멘터리<br/>
-                                    • <strong>임파스토</strong> - 두꺼운 물감, 입체적 붓자국 (유화/아크릴)<br/>
+                                    • <strong>임파스토</strong> - 두꺼운 물감, 입체적 붓자국<br/>
                                     • <strong>수채화</strong> - 번지는 물감, 부드러운 색 전환<br/>
-                                    • <strong>스케치</strong> - 색연필/목탄, 종이 질감<br/>
-                                    Five colored styles: Graphic Novel / Photo / Impasto / Watercolor / Sketch
+                                    • <strong>스케치</strong> - 색연필/목탄, 종이 질감
                                 </li>
                                 <li>
                                     <strong>🖼️ 참조 이미지:</strong> 이미지를 업로드하면 선택한 스타일과 함께 더 정확한 매칭! / 
-                                    Upload reference image with your chosen style for better matching!
+                                    Upload reference image for better style matching!
                                 </li>
                                 <li>
-                                    <strong>📐 화면 비율:</strong> 다양한 비율이 필요하면 Nano Banana Pro 모델 사용 (16:9, 3:4, 9:16 등) / 
-                                    Need custom aspect ratios? Use Nano Banana Pro model (16:9, 3:4, 9:16, etc.)
-                                </li>
-                                <li>
-                                    <strong>⚡ 빠른 생성:</strong> 1K 해상도로 5-15초 내 초고속 생성! / 
-                                    1K resolution ensures super-fast generation (5-15 seconds)
-                                </li>
-                                <li>
-                                    <strong>💎 무료:</strong> Gemini Pro 구독에 포함! / 
-                                    Included in Gemini Pro subscription!
-                                </li>
-                                <li>
-                                    <strong>🖼️ 갤러리 기능:</strong> 모든 생성된 이미지가 IndexedDB에 자동 저장됩니다! 브라우저를 닫아도 유지되며, 용량 제한 없이 많은 이미지를 저장할 수 있습니다. / 
-                                    Gallery feature: All generated images are automatically saved to IndexedDB! Persists after closing browser with unlimited storage!
+                                    <strong>💾 갤러리 기능:</strong> 모든 생성된 이미지가 IndexedDB에 자동 저장됩니다! 브라우저를 닫아도 유지되며, 용량 제한 없이 많은 이미지를 저장할 수 있습니다 / 
+                                    All images auto-saved to IndexedDB! Persists after closing browser with unlimited storage
                                 </li>
                             </ul>
                         </div>
