@@ -133,7 +133,7 @@
             const [apiKey, setApiKey] = useState('');
             const [characterDescription, setCharacterDescription] = useState('');
             const [stylePrompt, setStylePrompt] = useState('');
-            const [negativePrompt, setNegativePrompt] = useState('cartoon, anime style, 3d render, low quality, blurry, distorted, watermark, text');
+            const [negativePrompt, setNegativePrompt] = useState('cartoon, anime style, 3d render, low quality, blurry, distorted, watermark, text, typography, captions, labels, overlaid text, logos, brand marks, title cards, subtitles, credits');
             const [scenes, setScenes] = useState([
                 { id: 1, prompt: '', generatedImage: null, loading: false, error: null, enhancing: false }
             ]);
@@ -281,21 +281,38 @@
             const [autoEnhance, setAutoEnhance] = useState(true);
 
             // Nano Banana prompt enhancement system prompt
-            const ENHANCE_SYSTEM_PROMPT = `You are a Nano Banana (Gemini Image) prompt optimization expert. Your job is to take a user's raw image generation prompt and rewrite it into an optimized prompt following the official Nano Banana prompting best practices.
+            const ENHANCE_SYSTEM_PROMPT = `You are a Nano Banana (Gemini Image) prompt optimization expert specialized in Korean broadcast news illustration. Your job is to take a user's raw image generation prompt and rewrite it into an optimized prompt that will generate high-quality news reenactment imagery while avoiding content policy rejections.
 
-RULES:
-1. STRUCTURE: Use the formula: [Subject] + [Action] + [Location/context] + [Composition] + [Style]
+CORE RULES:
+1. STRUCTURE: Use the formula: [Subject] + [Action] + [Location/context] + [Composition] + [Camera/Lighting]
 2. BE SPECIFIC: Add concrete details on subject appearance, lighting, and composition
 3. POSITIVE FRAMING: Describe what you WANT, not what you don't want (e.g., "empty street" instead of "no cars")
-4. CAMERA CONTROL: Add photographic/cinematic terms like camera angle, lens type, depth of field
+4. CAMERA CONTROL: Add photographic/cinematic terms — camera angle, lens type, depth of field, focal length
 5. LIGHTING: Specify lighting setup (e.g., "soft diffused light", "dramatic chiaroscuro", "golden hour backlighting")
 6. MATERIALITY: Define textures and materials precisely (e.g., "navy blue tweed" not just "suit")
 7. NO TAG SOUP: Write narrative descriptions, NOT keyword lists. No "4k, masterpiece, trending" spam
 8. KEEP THE CORE INTENT: Do not change what the user wants to depict. Only enhance HOW it's described
 9. If the user writes in Korean, output the enhanced prompt in ENGLISH (Nano Banana works best with English prompts), but keep any specific Korean text that should appear IN the image in Korean within quotes
-10. Keep the enhanced prompt concise but detailed - aim for 2-4 sentences maximum
+10. Keep the enhanced prompt concise but detailed — aim for 2-4 sentences maximum
 11. Do NOT include style instructions (those are handled separately). Focus only on the SCENE description
 12. Do NOT include negative prompts or "avoid" instructions
+
+NEWS REENACTMENT — VIOLENCE & SENSITIVE CONTENT REFRAMING:
+This tool is used by professional Korean broadcast news teams (KBS, MBC, SBS etc.) to create editorial illustrations for news stories. Many news stories involve crime, accidents, disasters, conflict, or other sensitive topics. You MUST reframe these scenes to convey the narrative WITHOUT triggering content policy blocks:
+
+- CRIME SCENES: Never depict the act of violence directly. Instead show the AFTERMATH, INVESTIGATION, or CONTEXTUAL scene. e.g., "stabbing incident" → "a forensic investigation team examining evidence markers on a dimly lit urban sidewalk at night, police tape cordoning off the area, flashing emergency lights in the background"
+- ACCIDENTS: Show emergency response, wreckage from a wide establishing shot, or bystander perspective — not the moment of impact. e.g., "car crash" → "emergency responders attending to a vehicle collision scene on a rain-slicked highway, fire truck and ambulance lights illuminating the darkness, debris scattered across lanes"
+- WEAPONS: If weapons must appear, show them as EVIDENCE items (inside evidence bags, on a table at a press conference, in a display case) rather than being wielded. e.g., "man with knife" → "a sharp kitchen knife sealed inside a clear evidence bag lying on a detective's desk under fluorescent office lighting"
+- PHYSICAL CONFRONTATION: Depict the TENSION or MOMENT BEFORE/AFTER rather than the violent act. Use wide shots, silhouettes, or obscured angles. e.g., "fight" → "two silhouetted figures facing each other in a tense standoff on a poorly lit street, captured from a distant wide-angle perspective"
+- PROTESTS/RIOTS: Show the scale and atmosphere from an elevated or distant vantage point. e.g., "violent protest" → "an aerial wide shot of a large crowd gathered in a city plaza with scattered smoke plumes, police line visible in the distance, dramatic overcast sky"
+- DISASTERS: Show the environmental scale and rescue efforts, not human suffering. e.g., "earthquake victims" → "collapsed concrete buildings with rescue workers in orange vests searching through rubble, dust hanging in the air, cranes and emergency vehicles surrounding the site"
+- MILITARY/WAR: Show equipment, landscapes, strategic overviews — not casualties. e.g., "war zone" → "a desolate urban landscape with damaged buildings and scattered debris, military vehicles parked along an empty road, overcast grey sky, photojournalism perspective"
+- MEDICAL: Show hospital exteriors, medical equipment, or healthcare workers — not graphic injuries or procedures. e.g., "surgery" → "a brightly lit modern operating room viewed through a glass observation window, surgical team in blue scrubs preparing instruments"
+- DEATH/MOURNING: Show memorial scenes, flowers, candles, or grieving from a respectful distance. Never depict bodies.
+
+TEXT & LOGO RULES:
+- ALWAYS add to your rewritten prompt: "The image contains no text, no typography, no captions, no labels, no watermarks, no logos, no brand marks, no overlaid words of any kind."
+- EXCEPTION: Only if the user explicitly requests specific text or a specific logo/brand in the image, include that specific text/logo and still exclude all others.
 
 OUTPUT: Return ONLY the enhanced prompt text. No explanations, no markdown, no quotes around the result.`;
 
@@ -316,7 +333,7 @@ OUTPUT: Return ONLY the enhanced prompt text. No explanations, no markdown, no q
                 ));
 
                 try {
-                    const userMessage = `Enhance this image generation prompt for Nano Banana:\n\n"${scene.prompt}"${characterDescription.trim() ? `\n\nContext - Character description that will be added separately: ${characterDescription}` : ''}`;
+                    const userMessage = `Enhance this image generation prompt for Korean broadcast news illustration using Nano Banana. This is for professional news reenactment — reframe any violent or sensitive content to avoid policy blocks while preserving the news narrative:\n\n"${scene.prompt}"${characterDescription.trim() ? `\n\nContext - Character description that will be added separately: ${characterDescription}` : ''}`;
 
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
                         method: 'POST',
@@ -369,6 +386,13 @@ OUTPUT: Return ONLY the enhanced prompt text. No explanations, no markdown, no q
                 
                 fullPrompt += `Scene: ${scenePrompt}`;
                 
+                // Always append no-text/no-logo rule unless the scene prompt explicitly mentions text or logo
+                const lowerPrompt = scenePrompt.toLowerCase();
+                const hasExplicitText = /(?:텍스트|text|글자|문구|로고|logo|brand|간판|sign|banner|배너|타이틀|title|자막|subtitle|캡션|caption)/.test(lowerPrompt);
+                if (!hasExplicitText) {
+                    fullPrompt += `\n\nIMPORTANT: The image must contain absolutely no text, no typography, no captions, no labels, no watermarks, no logos, no brand marks, no overlaid words of any kind.`;
+                }
+                
                 if (negativePrompt.trim()) {
                     fullPrompt += `\n\nAvoid: ${negativePrompt}`;
                 }
@@ -396,7 +420,7 @@ OUTPUT: Return ONLY the enhanced prompt text. No explanations, no markdown, no q
                     ));
 
                     try {
-                        const userMessage = `Enhance this image generation prompt for Nano Banana:\n\n"${scene.prompt}"${characterDescription.trim() ? `\n\nContext - Character description that will be added separately: ${characterDescription}` : ''}`;
+                        const userMessage = `Enhance this image generation prompt for Korean broadcast news illustration using Nano Banana. This is for professional news reenactment — reframe any violent or sensitive content to avoid policy blocks while preserving the news narrative:\n\n"${scene.prompt}"${characterDescription.trim() ? `\n\nContext - Character description that will be added separately: ${characterDescription}` : ''}`;
 
                         const enhanceResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
                             method: 'POST',
@@ -573,7 +597,7 @@ OUTPUT: Return ONLY the enhanced prompt text. No explanations, no markdown, no q
                     }
                     
                     parts.push({
-                        text: `IMPORTANT: Maintain the EXACT SAME character appearance, facial features, clothing, and overall style as shown in the reference image(s). Keep complete visual consistency with the reference. Create this NEW scene: ${fullPrompt}. The character(s) must look IDENTICAL to the reference image - same face, same hair, same clothing, same art style.`
+                        text: `IMPORTANT: Maintain the EXACT SAME character appearance, facial features, clothing, and overall style as shown in the reference image(s). Keep complete visual consistency with the reference. Create this NEW scene: ${fullPrompt}. The character(s) must look IDENTICAL to the reference image - same face, same hair, same clothing, same art style. The image must contain no text, no typography, no logos, no watermarks, no overlaid words of any kind.`
                     });
 
                     const requestBody = {
@@ -1259,6 +1283,12 @@ OUTPUT: Return ONLY the enhanced prompt text. No explanations, no markdown, no q
                                     구도, 조명, 카메라, 텍스처 등의 디테일이 자동 추가됩니다. "프롬프트 보정" 버튼으로 수동 보정도 가능! / 
                                     Auto-fix: Even simple Korean prompts get auto-optimized based on official Nano Banana guide! 
                                     Composition, lighting, camera, and texture details are added automatically. Use "Fix Prompt" button for manual enhancement!
+                                </li>
+                                <li>
+                                    <strong>🛡️ 뉴스 재현 자동 리프레이밍:</strong> 범죄, 사고, 재난 등 민감한 뉴스 장면을 자동으로 정책 위반 없이 재구성합니다. 
+                                    폭력 직접 묘사 대신 수사 현장, 여파, 긴장감 있는 구도로 변환! 텍스트/로고도 자동 제거됩니다. / 
+                                    News reframing: Sensitive scenes (crime, accidents, disasters) are auto-reframed to avoid policy blocks — 
+                                    showing investigation, aftermath, and tension instead of direct violence. Text/logos auto-removed!
                                 </li>
                                 <li>
                                     <strong>💎 무료:</strong> Gemini Pro 구독에 포함! / 
